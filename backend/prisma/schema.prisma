@@ -1,0 +1,85 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id              String      @id @default(uuid())
+  name            String
+  email           String      @unique
+  avatar          String?
+  role            String      @default("CUSTOMER") // CUSTOMER, ADMIN
+  preferencesJson Json?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  sentGifts       GiftOrder[] @relation("SentGifts")
+  receivedGifts   GiftOrder[] @relation("ReceivedGifts")
+
+  @@map("users")
+}
+
+model Product {
+  id              String      @id @default(uuid())
+  title           String
+  brand           String
+  category        String
+  priceCop        Int
+  image           String
+  description     String
+  variantsJson    Json        // Tallas, colores, stock por variante
+  tagsJson        Json?       // Etiquetas ej: ["trending", "regalo-ideal", "ropa"]
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  mainInGifts     GiftOrder[] @relation("MainProduct")
+  selectedInGifts GiftOrder[] @relation("SelectedProduct")
+
+  @@map("products")
+}
+
+model GiftOrder {
+  id                    String               @id @default(uuid())
+  senderId              String
+  receiverId            String?
+  mainProductId         String
+  capsuleProductIdsJson Json                 // Array de hasta 2 IDs de productos alternativos
+  selectedProductId     String?
+  selectedVariant       String?              // Talla / color confirmado por quien recibe
+  status                String               @default("DRAFT") // DRAFT, PENDING_PAYMENT, PAID, OPENED, CONFIRMED, DISPATCHED
+  isGroupGift           Boolean              @default(false)
+  totalAmountCop        Int
+  paidAmountCop         Int                  @default(0)
+  dedication            String?              @db.Text
+  secretHint            String?              @db.Text
+  reaction              String?              // Emoji o mensaje de reacción de Valentina
+  unlockedCouponCode    String?              // Código de descuento para recompra generado
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  sender                User                 @relation("SentGifts", fields: [senderId], references: [id])
+  receiver              User?                @relation("ReceivedGifts", fields: [receiverId], references: [id])
+  mainProduct           Product              @relation("MainProduct", fields: [mainProductId], references: [id])
+  selectedProduct       Product?             @relation("SelectedProduct", fields: [selectedProductId], references: [id])
+  transactions          PaymentTransaction[]
+
+  @@map("gift_orders")
+}
+
+model PaymentTransaction {
+  id                String    @id @default(uuid())
+  giftOrderId       String
+  payerName         String
+  amountCop         Int
+  status            String    // APPROVED, PENDING, REJECTED
+  simulationOutcome String    // SUCCESS, INSUFFICIENT_FUNDS, SYSTEM_TIMEOUT, etc.
+  createdAt         DateTime  @default(now())
+
+  giftOrder         GiftOrder @relation(fields: [giftOrderId], references: [id], onDelete: Cascade)
+
+  @@map("payment_transactions")
+}
