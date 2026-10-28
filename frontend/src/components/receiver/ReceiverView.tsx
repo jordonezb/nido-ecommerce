@@ -38,6 +38,7 @@ export function ReceiverView() {
     giverUser,
     refreshActiveGift,
     updateActiveGiftOptimistic,
+    triggerValentinaNotification,
   } = useGiftApp();
 
   const [isUnboxing, setIsUnboxing] = useState<boolean>(false);
@@ -120,6 +121,14 @@ export function ReceiverView() {
       });
 
       triggerCelebrationConfetti();
+      triggerValentinaNotification({
+        giftOrderId: activeGift.id,
+        reaction: fullReaction,
+        selectedProductId: selectedProduct.id,
+        selectedVariant: selectedVariant || 'Estándar',
+        unlockedCouponCode: updated.unlockedCouponCode || 'NIDO-CONEXION-15',
+        completedAt: new Date().toISOString(),
+      });
       updateActiveGiftOptimistic(updated);
       await refreshActiveGift();
     } catch (error) {

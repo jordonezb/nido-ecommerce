@@ -15,6 +15,15 @@ import { fetchBootstrap, resetDemo, getGiftById } from '../services/api';
 import { useRealtimeGift } from '../hooks/useRealtimeGift';
 import { triggerCelebrationConfetti } from '../lib/confetti';
 
+export interface ValentinaReactionNotification {
+  giftOrderId: string;
+  reaction: string;
+  selectedProductId: string;
+  selectedVariant: string;
+  unlockedCouponCode: string;
+  completedAt: string;
+}
+
 interface GiftAppContextType {
   users: User[];
   products: Product[];
@@ -28,6 +37,9 @@ interface GiftAppContextType {
   isConnected: boolean;
   notificationCount: number;
   lastLiveActivity: GiftLiveActivityPayload | null;
+  valentinaNotification: ValentinaReactionNotification | null;
+  dismissValentinaNotification: () => void;
+  triggerValentinaNotification: (notif: ValentinaReactionNotification) => void;
   setViewMode: (mode: ViewMode) => void;
   setActiveGift: (gift: GiftOrder | null) => void;
   loadData: () => Promise<void>;
@@ -47,6 +59,16 @@ export function GiftAppProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isResetting, setIsResetting] = useState<boolean>(false);
   const [lastLiveActivity, setLastLiveActivity] = useState<GiftLiveActivityPayload | null>(null);
+  const [valentinaNotification, setValentinaNotification] = useState<ValentinaReactionNotification | null>(null);
+
+  const dismissValentinaNotification = useCallback(() => {
+    setValentinaNotification(null);
+  }, []);
+
+  const triggerValentinaNotification = useCallback((notif: ValentinaReactionNotification) => {
+    setValentinaNotification(notif);
+    triggerCelebrationConfetti();
+  }, []);
 
   const loadData = useCallback(async () => {
     try {
@@ -61,6 +83,16 @@ export function GiftAppProvider({ children }: { children: React.ReactNode }) {
         if (res.data.gifts.length > 0) {
           const latest = res.data.gifts[0];
           setActiveGift(latest);
+          if (latest.status === 'CLAIMED_OR_SWAPPED' && latest.reaction) {
+            setValentinaNotification({
+              giftOrderId: latest.id,
+              reaction: latest.reaction,
+              selectedProductId: latest.selectedProductId || latest.mainProductId,
+              selectedVariant: latest.selectedVariant || 'Estándar',
+              unlockedCouponCode: latest.unlockedCouponCode || 'NIDO-CONEXION-15',
+              completedAt: latest.updatedAt,
+            });
+          }
         } else {
           setActiveGift(null);
         }
@@ -80,6 +112,16 @@ export function GiftAppProvider({ children }: { children: React.ReactNode }) {
       setGifts((prev) =>
         prev.map((g) => (g.id === updated.id ? updated : g)),
       );
+      if (updated.status === 'CLAIMED_OR_SWAPPED' && updated.reaction) {
+        setValentinaNotification({
+          giftOrderId: updated.id,
+          reaction: updated.reaction,
+          selectedProductId: updated.selectedProductId || updated.mainProductId,
+          selectedVariant: updated.selectedVariant || 'Estándar',
+          unlockedCouponCode: updated.unlockedCouponCode || 'NIDO-CONEXION-15',
+          completedAt: updated.updatedAt,
+        });
+      }
     } catch (error) {
       console.error('Error al refrescar regalo activo:', error);
     }
@@ -96,6 +138,7 @@ export function GiftAppProvider({ children }: { children: React.ReactNode }) {
       if (res.success) {
         await loadData();
         setLastLiveActivity(null);
+        setValentinaNotification(null);
       }
     } catch (error) {
       console.error('Error al reiniciar demo:', error);
@@ -145,6 +188,14 @@ export function GiftAppProvider({ children }: { children: React.ReactNode }) {
   const handleGiftCompleted = useCallback(
     (payload: GiftCompletedPayload) => {
       triggerCelebrationConfetti();
+      setValentinaNotification({
+        giftOrderId: payload.giftOrderId,
+        reaction: payload.reaction,
+        selectedProductId: payload.selectedProductId,
+        selectedVariant: payload.selectedVariant,
+        unlockedCouponCode: payload.unlockedCouponCode,
+        completedAt: payload.completedAt,
+      });
       setActiveGift((prev) =>
         prev
           ? {
@@ -192,6 +243,9 @@ export function GiftAppProvider({ children }: { children: React.ReactNode }) {
         isConnected,
         notificationCount,
         lastLiveActivity,
+        valentinaNotification,
+        dismissValentinaNotification,
+        triggerValentinaNotification,
         setViewMode,
         setActiveGift,
         loadData,
