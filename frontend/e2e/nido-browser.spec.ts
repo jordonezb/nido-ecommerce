@@ -40,7 +40,7 @@ test.describe('Nido Live Gift - Suite E2E desde el Navegador', () => {
     await expect(page.getByText(/Valentina Ríos/i).first()).toBeVisible();
 
     // 4. Validar catálogo con productos, categorías y precios en COP
-    await expect(page.getByText(/Regalo Principal/i)).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Regalo Principal/i })).toBeVisible();
     await expect(page.getByText(/Chaqueta Denim/i).or(page.getByText(/Cata Guiada/i)).first()).toBeVisible();
   });
 

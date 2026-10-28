@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Sparkles,
   ShoppingBag,
@@ -19,6 +19,7 @@ import {
   Star,
   Layers,
   ChevronRight,
+  Receipt,
 } from 'lucide-react';
 import { useGiftApp } from '../../context/GiftAppContext';
 import { Product, ProductVariant, PaymentStatus } from '../../types';
@@ -96,7 +97,7 @@ export function GiverView() {
   // Favoritos locales para feedback visual
   const [favorites, setFavorites] = useState<Record<string, boolean>>({});
 
-  // Sincronizar estado inicial cuando exista un regalo activo
+  // Sincronizar estado inicial cuando exista un regalo activo o cargar primer producto
   useEffect(() => {
     if (activeGift?.mainProduct) {
       setSelectedProduct(activeGift.mainProduct);
@@ -113,10 +114,16 @@ export function GiverView() {
       if (defaultProd.variantsJson?.length > 0) {
         setSelectedVariant(defaultProd.variantsJson[0].name);
       }
+      // Inicializar automáticamente 2 alternativas pre-aprobadas elegibles
+      const defaultAlts = products
+        .filter((p) => p.id !== defaultProd.id && p.priceCop <= defaultProd.priceCop)
+        .slice(0, 2)
+        .map((p) => p.id);
+      setCapsuleProductIds(defaultAlts);
     }
   }, [activeGift, products]);
 
-  // Manejo de cambio de producto principal
+  // Manejo de cambio explícito de producto principal
   const handleSelectMainProduct = async (prod: Product) => {
     setSelectedProduct(prod);
     if (prod.variantsJson?.length > 0) {
@@ -124,13 +131,25 @@ export function GiverView() {
     }
     try {
       const alts = await getProductAlternatives(prod.id);
-      setCapsuleProductIds(alts.slice(0, 2).map((a) => a.id));
+      if (alts && alts.length > 0) {
+        setCapsuleProductIds(alts.slice(0, 2).map((a) => a.id));
+      } else {
+        const localAlts = products
+          .filter((p) => p.id !== prod.id && p.priceCop <= prod.priceCop)
+          .slice(0, 2)
+          .map((p) => p.id);
+        setCapsuleProductIds(localAlts);
+      }
     } catch {
-      // Ignorar si falla
+      const localAlts = products
+        .filter((p) => p.id !== prod.id && p.priceCop <= prod.priceCop)
+        .slice(0, 2)
+        .map((p) => p.id);
+      setCapsuleProductIds(localAlts);
     }
   };
 
-  // Botón: Autocompletar con Nido AI
+  // Botón: Autocompletar con Nido AI (Garantiza exactamente 2 alternativas válidas de inmediato)
   const handleAutocompleteAi = async () => {
     if (!selectedProduct) return;
     try {
@@ -145,17 +164,37 @@ export function GiverView() {
 
       setDedication(advice.dedication);
       setSecretHint(advice.secretHint);
-      if (advice.recommendedCapsuleIds?.length > 0) {
-        setCapsuleProductIds(advice.recommendedCapsuleIds.slice(0, 2));
+
+      // Elegibles locales garantizados
+      const eligibleIds = products
+        .filter((p) => p.id !== selectedProduct.id && p.priceCop <= selectedProduct.priceCop)
+        .map((p) => p.id);
+
+      const validAiIds = (advice.recommendedCapsuleIds || []).filter((id) =>
+        eligibleIds.includes(id),
+      );
+
+      if (validAiIds.length >= 2) {
+        setCapsuleProductIds(validAiIds.slice(0, 2));
+      } else {
+        const remaining = eligibleIds.filter((id) => !validAiIds.includes(id));
+        const combined = [...validAiIds, ...remaining].slice(0, 2);
+        setCapsuleProductIds(combined);
       }
     } catch (error) {
       console.error('Error con Asistente IA:', error);
+      // Respaldo local de alta fidelidad
+      const localAlts = products
+        .filter((p) => p.id !== selectedProduct.id && p.priceCop <= selectedProduct.priceCop)
+        .slice(0, 2)
+        .map((p) => p.id);
+      setCapsuleProductIds(localAlts);
     } finally {
       setIsAiLoading(false);
     }
   };
 
-  // Toggle de producto alternativo para la cápsula
+  // Toggle de producto alternativo para la cápsula (respeta límite máximo de 2)
   const toggleCapsuleProduct = (altId: string) => {
     if (capsuleProductIds.includes(altId)) {
       setCapsuleProductIds(capsuleProductIds.filter((id) => id !== altId));
@@ -276,10 +315,25 @@ export function GiverView() {
       ? products
       : products.filter((p) => p.category === selectedCategory);
 
-  // Productos alternativos elegibles
-  const availableAlternatives = products.filter(
-    (p) => selectedProduct && p.id !== selectedProduct.id && p.priceCop <= selectedProduct.priceCop,
-  );
+  // Productos alternativos elegibles (mismo o menor precio que el principal)
+  // Ordenados para que los que estén dentro de capsuleProductIds aparezcan PRIMERO
+  const availableAlternatives = useMemo(() => {
+    if (!selectedProduct) return [];
+    const eligible = products.filter(
+      (p) => p.id !== selectedProduct.id && p.priceCop <= selectedProduct.priceCop,
+    );
+    return [...eligible].sort((a, b) => {
+      const aIn = capsuleProductIds.includes(a.id) ? 1 : 0;
+      const bIn = capsuleProductIds.includes(b.id) ? 1 : 0;
+      if (aIn !== bIn) return bIn - aIn;
+      return b.priceCop - a.priceCop;
+    });
+  }, [products, selectedProduct, capsuleProductIds]);
+
+  // Lista de objetos de productos seleccionados para la cápsula (para desglose en checkout)
+  const capsuleProducts = useMemo(() => {
+    return products.filter((p) => capsuleProductIds.includes(p.id));
+  }, [products, capsuleProductIds]);
 
   // Cálculos de Vaca / Fondos
   const isIndividual = !isGroupGift;
@@ -427,7 +481,7 @@ export function GiverView() {
                   <button
                     type="button"
                     onClick={(e) => toggleFavorite(e, prod.id)}
-                    className="absolute top-2 right-2 w-7 h-7 rounded-full bg-white/90 backdrop-blur-md flex items-center justify-center shadow-sm transition-transform active:scale-90"
+                    className="absolute top-2 right-2 w-7 h-7 rounded-full bg-white/90 backdrop-blur-md flex items-center justify-center shadow-sm transition-transform active:scale-90 z-10"
                   >
                     <Heart
                       className={`w-3.5 h-3.5 transition-colors ${
@@ -436,10 +490,10 @@ export function GiverView() {
                     />
                   </button>
 
-                  {/* Badge de Selección */}
+                  {/* Badge Destacado de Selección Indiscutible */}
                   {isSelected && (
-                    <span className="absolute bottom-2 left-2 bg-zoop-500 text-white rounded-full px-2 py-0.5 text-[9px] font-black shadow-pill flex items-center gap-1">
-                      <Check className="w-2.5 h-2.5" /> Elegido
+                    <span className="absolute top-2 left-2 bg-gradient-to-r from-zoop-500 to-coral-500 text-white rounded-full px-2 py-0.5 text-[9px] font-black shadow-pill flex items-center gap-1 z-10 animate-fade-in">
+                      <Check className="w-3 h-3 stroke-[3]" /> Regalo Principal Elegido
                     </span>
                   )}
                 </div>
@@ -456,11 +510,34 @@ export function GiverView() {
                     {prod.title}
                   </h5>
 
-                  <div className="flex items-center justify-between pt-1">
+                  <div className="flex items-center justify-between pt-0.5">
                     <span className="text-xs font-black text-zoop-600">
                       ${prod.priceCop.toLocaleString('es-CO')} COP
                     </span>
                   </div>
+
+                  {/* Botón Explícito de Elección */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSelectMainProduct(prod);
+                    }}
+                    className={`w-full mt-2 py-1.5 px-2 rounded-xl text-[10px] font-black transition-all flex items-center justify-center gap-1 ${
+                      isSelected
+                        ? 'bg-zoop-500 text-white shadow-xs'
+                        : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700 hover:text-zinc-900 border border-zinc-200'
+                    }`}
+                  >
+                    {isSelected ? (
+                      <>
+                        <Check className="w-3 h-3 stroke-[3]" />
+                        <span>Regalo Principal Elegido</span>
+                      </>
+                    ) : (
+                      <span>Elegir como Principal</span>
+                    )}
+                  </button>
                 </div>
               </div>
             );
@@ -492,15 +569,30 @@ export function GiverView() {
           </div>
         )}
 
-        {/* Botón Siguiente a Dedicatoria */}
-        <button
-          type="button"
-          onClick={() => scrollToSection(2)}
-          className="w-full py-4 rounded-full bg-zoop-500 hover:bg-zoop-600 text-white font-black text-xs shadow-pill transition-all active:scale-95 flex items-center justify-center gap-2"
-        >
-          <span>Continuar a Dedicatoria y Cápsula</span>
-          <ChevronRight className="w-4 h-4" />
-        </button>
+        {/* Barra Resumen Fija de Selección del Catálogo */}
+        {selectedProduct && (
+          <div className="sticky bottom-0 z-20 bg-white/95 backdrop-blur-md p-3 rounded-2xl border-2 border-zoop-500/40 shadow-xl flex items-center justify-between gap-3 animate-slide-up">
+            <div className="min-w-0 flex-1">
+              <span className="text-[9px] font-extrabold text-zoop-600 uppercase tracking-wider block">
+                Producto seleccionado:
+              </span>
+              <p className="text-xs font-black text-zinc-900 truncate">
+                {selectedProduct.title}
+              </p>
+              <span className="text-xs font-black text-zoop-600">
+                ${selectedProduct.priceCop.toLocaleString('es-CO')} COP
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => scrollToSection(2)}
+              className="shrink-0 py-2.5 px-4 rounded-full bg-zoop-500 hover:bg-zoop-600 text-white font-black text-xs shadow-pill transition-all active:scale-95 flex items-center gap-1.5"
+            >
+              <span>Continuar a Cápsula</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )}
@@ -510,6 +602,37 @@ export function GiverView() {
   {/* ========================================================================= */}
   {activeStep === 2 && (
     <div className="space-y-4 animate-slide-up">
+      {/* Tarjeta Resumen Superior del Regalo Principal Seleccionado */}
+      <div className="bg-gradient-to-r from-zinc-900 to-zinc-800 text-white p-3.5 rounded-3xl border border-zinc-700 shadow-md flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-11 h-11 rounded-2xl overflow-hidden bg-zinc-700 shrink-0 border border-zinc-600">
+            <img
+              src={selectedProduct?.image}
+              alt={selectedProduct?.title}
+              className="w-full h-full object-cover"
+            />
+          </div>
+          <div className="min-w-0">
+            <span className="text-[9px] font-black text-zoop-400 uppercase tracking-wider block">
+              🎁 Regalo Principal Seleccionado
+            </span>
+            <p className="text-xs font-black text-white truncate">
+              {selectedProduct?.title}
+            </p>
+            <span className="text-[10px] font-bold text-zinc-300">
+              ${selectedProduct?.priceCop.toLocaleString('es-CO')} COP • {selectedVariant || 'Edición Estándar'}
+            </span>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => scrollToSection(1)}
+          className="text-[10px] font-extrabold bg-white/10 hover:bg-white/20 text-white px-2.5 py-1.5 rounded-xl border border-white/20 whitespace-nowrap transition-colors shrink-0"
+        >
+          Cambiar
+        </button>
+      </div>
+
       <div ref={section2Ref} className="space-y-3.5 bg-white p-4 rounded-3xl border border-zinc-200/80 shadow-card">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -544,36 +667,57 @@ export function GiverView() {
           </div>
         </div>
 
-        {/* Alternativas pre-aprobadas */}
+        {/* Alternativas pre-aprobadas con contador y consistencia visual garantizada */}
         <div>
-          <span className="text-[10px] font-extrabold text-zinc-400 uppercase block mb-1.5">
-            Alternativas pre-aprobadas ({capsuleProductIds.length}/2):
-          </span>
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[10px] font-extrabold text-zinc-500 uppercase block">
+              Alternativas pre-aprobadas ({capsuleProductIds.length}/2):
+            </span>
+            <span
+              className={`text-[9px] font-black px-2 py-0.5 rounded-full border ${
+                capsuleProductIds.length === 2
+                  ? 'text-emerald-700 bg-emerald-100/70 border-emerald-300'
+                  : 'text-amber-800 bg-amber-100/70 border-amber-300'
+              }`}
+            >
+              {capsuleProductIds.length === 2
+                ? '✓ 2 de 2 elegidas'
+                : `Falta ${2 - capsuleProductIds.length} alternativa`}
+            </span>
+          </div>
+
           <div className="grid grid-cols-2 gap-2">
-            {availableAlternatives.slice(0, 4).map((alt) => {
+            {availableAlternatives.map((alt) => {
               const isSelected = capsuleProductIds.includes(alt.id);
               return (
                 <div
                   key={alt.id}
                   onClick={() => toggleCapsuleProduct(alt.id)}
-                  className={`cursor-pointer rounded-2xl p-2 border text-left flex items-center gap-2 transition-all ${
+                  className={`cursor-pointer rounded-2xl p-2.5 border text-left flex items-center gap-2.5 transition-all ${
                     isSelected
-                      ? 'border-emerald-500 bg-emerald-50/60 ring-1 ring-emerald-500 shadow-xs'
-                      : 'border-zinc-200/80 bg-zinc-50 hover:bg-white'
+                      ? 'border-emerald-500 bg-emerald-50/70 ring-2 ring-emerald-500/40 shadow-xs'
+                      : 'border-zinc-200/80 bg-zinc-50/70 hover:bg-white hover:border-zinc-300'
                   }`}
                 >
                   <img
                     src={alt.image}
                     alt={alt.title}
-                    className="w-10 h-10 rounded-xl object-cover shrink-0"
+                    className="w-11 h-11 rounded-xl object-cover shrink-0"
                   />
                   <div className="min-w-0 flex-1">
-                    <p className="text-[10px] font-black text-zinc-800 truncate">
+                    <p className="text-[10px] font-black text-zinc-900 truncate">
                       {alt.title}
                     </p>
                     <p className="text-[9px] text-zinc-400 truncate">{alt.brand}</p>
+                    <span className="text-[9px] font-black text-zinc-600 block mt-0.5">
+                      ${alt.priceCop.toLocaleString('es-CO')} COP
+                    </span>
                   </div>
-                  {isSelected && <Check className="w-4 h-4 text-emerald-600 shrink-0" />}
+                  {isSelected && (
+                    <div className="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center shrink-0 shadow-xs">
+                      <Check className="w-3.5 h-3.5 stroke-[3]" />
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -671,6 +815,103 @@ export function GiverView() {
             >
               Hacer Vaca 🐮
             </button>
+          </div>
+        </div>
+
+        {/* ================================================================= */}
+        {/* RESUMEN DE COMPRA & DESGLOSE ITEMIZADO                            */}
+        {/* ================================================================= */}
+        <div className="bg-zinc-50/80 p-3.5 rounded-3xl border border-zinc-200/90 space-y-2.5">
+          <div className="flex items-center justify-between border-b border-zinc-200/70 pb-2">
+            <h5 className="text-xs font-black uppercase tracking-wider text-zinc-900 flex items-center gap-1.5">
+              <Receipt className="w-3.5 h-3.5 text-zoop-500" />
+              <span>Resumen de Compra</span>
+            </h5>
+            <span className="text-[10px] font-extrabold text-emerald-800 bg-emerald-100/70 px-2 py-0.5 rounded-full border border-emerald-300">
+              0% Devoluciones Activa
+            </span>
+          </div>
+
+          {/* 1. Fila del Regalo Principal */}
+          <div className="flex items-start justify-between gap-3 text-xs">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[9px] font-black text-zoop-600 bg-zoop-50 px-1.5 py-0.5 rounded-md border border-zoop-200 shrink-0">
+                  Principal
+                </span>
+                <p className="font-extrabold text-zinc-900 truncate">
+                  {selectedProduct?.title}
+                </p>
+              </div>
+              <p className="text-[10px] text-zinc-500 mt-0.5 pl-1">
+                1 ud. • Variante: {selectedVariant || 'Edición Estándar'}
+              </p>
+            </div>
+            <span className="font-black text-zinc-900 text-xs shrink-0">
+              ${(selectedProduct?.priceCop || totalAmount).toLocaleString('es-CO')} COP
+            </span>
+          </div>
+
+          {/* 2. Fila de la Cápsula Anti-Devoluciones */}
+          <div className="bg-white p-2.5 rounded-2xl border border-emerald-200/80 space-y-1.5">
+            <div className="flex items-center justify-between text-[10px]">
+              <span className="font-black text-emerald-800 uppercase tracking-wide flex items-center gap-1">
+                <span>🛡️</span> Cápsula Anti-Devoluciones ({capsuleProducts.length}/2 alternativas)
+              </span>
+              <span className="font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 text-[9px]">
+                $0 COP adicional
+              </span>
+            </div>
+
+            <div className="space-y-1 pl-1">
+              {capsuleProducts.map((cp) => (
+                <div key={cp.id} className="flex items-center justify-between text-[11px] text-zinc-600">
+                  <span className="truncate pr-2">• {cp.title}</span>
+                  <span className="text-[9px] font-extrabold text-emerald-600 shrink-0">Incluida</span>
+                </div>
+              ))}
+              {capsuleProducts.length === 0 && (
+                <p className="text-[10px] text-zinc-400 italic">No se han elegido alternativas aún.</p>
+              )}
+            </div>
+
+            <p className="text-[9px] font-bold text-emerald-700/90 bg-emerald-50/60 p-1.5 rounded-lg border border-emerald-100/80 leading-tight">
+              ✓ Incluidas como respaldo de cambio pre-despacho — $0 COP adicional. Valentina puede confirmar su talla o canjear por cualquiera de estas opciones sin costo.
+            </p>
+          </div>
+
+          {/* 3. Línea Divisoria y Total */}
+          <div className="pt-2 border-t border-zinc-200 space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-black text-zinc-800 uppercase tracking-wider">
+                Total a Pagar:
+              </span>
+              <span className="text-sm font-black text-zoop-600">
+                ${totalAmount.toLocaleString('es-CO')} COP
+              </span>
+            </div>
+
+            {/* 4. Si es Modo Vaca: Desglose de Co-Regalo */}
+            {isGroupGift && (
+              <div className="mt-2 bg-amber-50/80 p-2.5 rounded-2xl border border-amber-200 text-xs space-y-1 animate-fade-in">
+                <div className="flex justify-between text-[11px] text-amber-900">
+                  <span className="font-bold">Monto Total del Regalo:</span>
+                  <span className="font-black">${totalAmount.toLocaleString('es-CO')} COP</span>
+                </div>
+                <div className="flex justify-between text-[11px] text-amber-900">
+                  <span className="font-bold">Tu aporte actual:</span>
+                  <span className="font-black text-emerald-700">
+                    ${(customAmount > 0 ? Math.min(customAmount, pendingAmount) : Math.min(50000, pendingAmount)).toLocaleString('es-CO')} COP
+                  </span>
+                </div>
+                <div className="flex justify-between text-[11px] text-amber-900 border-t border-amber-200/60 pt-1">
+                  <span className="font-extrabold">Restante por cubrir:</span>
+                  <span className="font-black text-rose-600">
+                    ${Math.max(0, pendingAmount - (customAmount > 0 ? Math.min(customAmount, pendingAmount) : Math.min(50000, pendingAmount))).toLocaleString('es-CO')} COP
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
