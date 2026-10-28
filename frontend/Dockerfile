@@ -14,9 +14,7 @@ RUN npm install
 # Copiar el código fuente completo
 COPY . .
 
-EXPOSE 3000
-
-ENV PORT 3000
 ENV HOSTNAME "0.0.0.0"
 
-CMD ["npm", "run", "dev"]
+# Construye el frontend con las variables inyectadas y arranca el servidor de produccion
+CMD ["sh", "-c", "npm run build && npm run start"]
