@@ -20,9 +20,12 @@ import {
   Layers,
   ChevronRight,
   Receipt,
+  Bell,
+  X,
 } from 'lucide-react';
 import { useGiftApp } from '../../context/GiftAppContext';
 import { Product, ProductVariant, PaymentStatus } from '../../types';
+import { triggerCelebrationConfetti } from '../../lib/confetti';
 import {
   createGift,
   simulateCheckout,
@@ -49,6 +52,8 @@ export function GiverView() {
     setActiveGift,
     refreshActiveGift,
     lastLiveActivity,
+    valentinaNotification,
+    dismissValentinaNotification,
   } = useGiftApp();
 
   // Refs para navegación suave entre secciones
@@ -86,6 +91,33 @@ export function GiverView() {
   const [customAmount, setCustomAmount] = useState<number>(0);
   const [isProcessingPayment, setIsProcessingPayment] = useState<boolean>(false);
   const [paymentMessage, setPaymentMessage] = useState<string | null>(null);
+  const [isFullPaymentSuccess, setIsFullPaymentSuccess] = useState<boolean>(false);
+
+  // Función para reiniciar el carrito y volver al inicio
+  const resetCart = () => {
+    setActiveStep(1);
+    setDedication('');
+    setSecretHint('');
+    setCustomAmount(0);
+    setIsGroupGift(false);
+    setPayerName('Mateo Gómez');
+    if (products.length > 0) {
+      setSelectedProduct(products[0]);
+      if (products[0].variantsJson?.length > 0) {
+        setSelectedVariant(products[0].variantsJson[0].name);
+      }
+      const defaultAlts = products
+        .filter((p) => p.id !== products[0].id && p.priceCop <= products[0].priceCop)
+        .slice(0, 2)
+        .map((p) => p.id);
+      setCapsuleProductIds(defaultAlts);
+    }
+    setIsFullPaymentSuccess(false);
+    setPaymentMessage('✨ ¡Pago completado! El carrito se ha reiniciado para una nueva sorpresa.');
+    setTimeout(() => {
+      section1Ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
+  };
 
   // Bottom Sheet de Error / Transacción
   const [showErrorSheet, setShowErrorSheet] = useState<boolean>(false);
@@ -277,8 +309,25 @@ export function GiverView() {
         await refreshActiveGift();
         if (outcome === 'APPROVED') {
           setShowErrorSheet(false);
-          setPaymentMessage(`🟢 Pago de $${amountToPay.toLocaleString('es-CO')} COP aprobado exitosamente.`);
-          setCustomAmount(0);
+          const isFullPayment =
+            amountToPay >= pendingAmount ||
+            (activeGift.paidAmountCop + amountToPay >= activeGift.totalAmountCop);
+
+          if (isFullPayment) {
+            triggerCelebrationConfetti();
+            setIsFullPaymentSuccess(true);
+            setPaymentMessage(
+              `🟢 ¡Pago de $${amountToPay.toLocaleString('es-CO')} COP aprobado exitosamente (100% cubierto)! Regresando al inicio...`,
+            );
+            setTimeout(() => {
+              resetCart();
+            }, 2500);
+          } else {
+            setPaymentMessage(
+              `🟢 Aporte de $${amountToPay.toLocaleString('es-CO')} COP recibido en La Vaca.`,
+            );
+            setCustomAmount(0);
+          }
         } else if (outcome === 'PENDING') {
           setShowErrorSheet(false);
           setPaymentMessage('🟡 Pago en revisión bancaria (Estado: Pendiente).');
@@ -352,10 +401,112 @@ export function GiverView() {
   return (
     <div className="space-y-4 pb-36 relative">
       {/* ========================================================================= */}
+      {/* NOTIFICACIÓN REACTIVA EN VIVO: VALENTINA ENVIÓ SU ELECCIÓN Y REACCIÓN     */}
+      {/* ========================================================================= */}
+      {valentinaNotification && (
+        <div
+          data-testid="valentina-reaction-toast"
+          className="sticky top-1 z-50 animate-bounce-subtle mx-0.5 rounded-3xl bg-gradient-to-br from-emerald-500 via-teal-600 to-emerald-700 text-white p-4 shadow-2xl border-2 border-emerald-300/80 backdrop-blur-md"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center text-lg shadow-inner animate-pulse">
+                💌
+              </div>
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-emerald-100 bg-white/20 px-2 py-0.5 rounded-full">
+                    ¡Valentina Confirmó!
+                  </span>
+                  <span className="text-[9px] text-emerald-200">En Vivo</span>
+                </div>
+                <h4 className="text-xs font-black text-white tracking-tight mt-0.5">
+                  Valentina envió su reacción a Mateo
+                </h4>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={dismissValentinaNotification}
+              className="text-white/80 hover:text-white p-1 rounded-full hover:bg-white/10 transition-colors"
+              aria-label="Cerrar notificación"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="mt-2.5 bg-white/15 backdrop-blur-sm rounded-2xl p-3 border border-white/20 space-y-1.5">
+            <p className="text-[11px] text-emerald-100 font-semibold leading-tight">
+              Reacción y dedicatoria recibida:
+            </p>
+            <p className="text-sm font-black text-white italic tracking-tight bg-black/20 p-2 rounded-xl">
+              &ldquo;{valentinaNotification.reaction}&rdquo;
+            </p>
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              <span className="text-[10px] font-bold bg-white text-emerald-800 px-2.5 py-0.5 rounded-full shadow-xs">
+                Variante: {valentinaNotification.selectedVariant}
+              </span>
+              <span className="text-[10px] font-bold bg-white text-emerald-800 px-2.5 py-0.5 rounded-full shadow-xs">
+                Bono desbloqueado: {valentinaNotification.unlockedCouponCode}
+              </span>
+            </div>
+          </div>
+
+          <div className="mt-2.5 flex items-center justify-between text-[10px] text-emerald-100 font-bold">
+            <span>✨ 0% Devoluciones: Despacho asegurado</span>
+            <button
+              type="button"
+              onClick={dismissValentinaNotification}
+              className="px-3 py-1 rounded-full bg-white text-emerald-900 font-black text-[10px] hover:bg-emerald-50 transition-all shadow-sm"
+            >
+              Entendido ✓
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* ALERTA / MODAL DE PAGO TOTAL EXITOSO Y REINICIO DE CARRITO                */}
+      {/* ========================================================================= */}
+      {isFullPaymentSuccess && (
+        <div
+          data-testid="full-payment-success-banner"
+          className="sticky top-1 z-50 animate-scale-in mx-0.5 rounded-3xl bg-gradient-to-br from-zoop-500 via-coral-500 to-rose-600 text-white p-4 shadow-2xl border-2 border-white/50 backdrop-blur-md"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-white/25 backdrop-blur-md flex items-center justify-center text-xl shadow-inner animate-bounce">
+              🎉
+            </div>
+            <div className="flex-1">
+              <span className="text-[10px] font-black uppercase tracking-widest text-rose-100 bg-white/20 px-2 py-0.5 rounded-full">
+                ¡100% Cubierto!
+              </span>
+              <h3 className="text-sm font-black text-white tracking-tight mt-0.5">
+                Pago Total Exitoso
+              </h3>
+              <p className="text-[11px] text-rose-100 font-medium leading-tight mt-0.5">
+                Sorpresa lista para Unboxing. Reiniciando carrito y regresando al Catálogo...
+              </p>
+            </div>
+          </div>
+          <div className="mt-3 flex items-center justify-end">
+            <button
+              type="button"
+              onClick={resetCart}
+              className="px-3.5 py-1.5 rounded-full bg-white text-zoop-600 font-black text-[11px] hover:bg-rose-50 transition-all shadow-md flex items-center gap-1.5"
+            >
+              <span>Ir al Catálogo Ahora</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
       {/* FASE 1: CATÁLOGO Y REGALO PRINCIPAL (PASO 1)                              */}
       {/* ========================================================================= */}
       {activeStep === 1 && (
-        <div className="space-y-4 animate-slide-up">
+        <div ref={section1Ref} className="space-y-4 animate-slide-up">
           {/* Saludo Estilo Nido Store */}
           <div className="flex items-center justify-between">
         <div>
