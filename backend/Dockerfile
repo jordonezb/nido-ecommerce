@@ -18,6 +18,10 @@ COPY . .
 # Generar el cliente de Prisma
 RUN npx prisma generate
 
+# Compilar la aplicación NestJS para producción
+RUN npm run build
+
 EXPOSE 4000
 
-CMD ["npm", "run", "start:dev"]
+# Sincroniza las tablas de la BD con prisma db push y arranca el servidor compilado
+CMD ["npm", "run", "start:prod"]
