@@ -203,12 +203,29 @@ export function GiverView() {
       setIsProcessingPayment(true);
       setPaymentMessage(null);
 
-      const pendingAmount = activeGift.totalAmountCop - activeGift.paidAmountCop;
-      const amountToPay = isGroupGift
-        ? customAmount > 0
-          ? customAmount
-          : Math.min(50000, pendingAmount > 0 ? pendingAmount : 50000)
-        : activeGift.totalAmountCop;
+      const pendingAmount = Math.max(
+        0,
+        activeGift.totalAmountCop - Math.min(activeGift.totalAmountCop, Math.max(0, activeGift.paidAmountCop)),
+      );
+
+      if (pendingAmount <= 0 && outcome === 'APPROVED') {
+        setPaymentMessage('✨ El regalo ya se encuentra 100% cubierto. ¡Listo para Unboxing!');
+        return;
+      }
+
+      let amountToPay: number;
+      if (isGroupGift) {
+        const requested = customAmount > 0 ? customAmount : Math.min(50000, pendingAmount);
+        if (outcome === 'APPROVED' && requested > pendingAmount) {
+          setPaymentMessage(
+            `⚠️ El aporte ($${requested.toLocaleString('es-CO')} COP) no puede ser superior al saldo restante ($${pendingAmount.toLocaleString('es-CO')} COP).`,
+          );
+          return;
+        }
+        amountToPay = Math.min(requested, pendingAmount);
+      } else {
+        amountToPay = pendingAmount > 0 ? pendingAmount : activeGift.totalAmountCop;
+      }
 
       const res = await simulateCheckout({
         giftOrderId: activeGift.id,
@@ -222,6 +239,7 @@ export function GiverView() {
         if (outcome === 'APPROVED') {
           setShowErrorSheet(false);
           setPaymentMessage(`🟢 Pago de $${amountToPay.toLocaleString('es-CO')} COP aprobado exitosamente.`);
+          setCustomAmount(0);
         } else if (outcome === 'PENDING') {
           setShowErrorSheet(false);
           setPaymentMessage('🟡 Pago en revisión bancaria (Estado: Pendiente).');
@@ -270,7 +288,9 @@ export function GiverView() {
 
   const totalAmount = activeGift?.totalAmountCop || selectedProduct?.priceCop || 0;
   const rawPaidAmount = activeGift?.paidAmountCop || 0;
-  const paidAmount = isIndividual && (isRejected || isPending) ? 0 : rawPaidAmount;
+  const effectivePaid = Math.min(totalAmount, Math.max(0, rawPaidAmount));
+  const paidAmount = isIndividual && (isRejected || isPending) ? 0 : effectivePaid;
+  const pendingAmount = Math.max(0, totalAmount - paidAmount);
   const progressPercent =
     totalAmount > 0 ? Math.min(100, Math.round((paidAmount / totalAmount) * 100)) : 0;
   const isFullyCovered = paidAmount >= totalAmount && totalAmount > 0 && !isRejected && !isPending;
@@ -711,32 +731,96 @@ export function GiverView() {
 
         {/* Si es Vaca: Formulario de Aportante */}
         {isGroupGift && (
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-[10px] font-extrabold text-zinc-400 uppercase block mb-1">
-                Nombre Aportante:
-              </label>
-              <input
-                type="text"
-                value={payerName}
-                onChange={(e) => setPayerName(e.target.value)}
-                placeholder="Ej. Mateo, Camila"
-                className="w-full text-xs p-2.5 rounded-2xl border border-zinc-200 bg-zinc-50 text-zinc-800"
-              />
+          <div className="space-y-2.5 bg-amber-50/60 p-3.5 rounded-2xl border border-amber-200/70">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-[10px] font-black text-amber-800 uppercase tracking-wider flex items-center gap-1">
+                <span>🐮</span> Modo Co-Regalo ("La Vaca")
+              </span>
+              <span className="text-[10px] font-bold text-amber-900 bg-amber-200/70 px-2 py-0.5 rounded-full">
+                Faltan: <strong className="font-black">${pendingAmount.toLocaleString('es-CO')} COP</strong>
+              </span>
             </div>
-            <div>
-              <label className="text-[10px] font-extrabold text-zinc-400 uppercase block mb-1">
-                Aporte COP:
-              </label>
-              <input
-                type="number"
-                step="10000"
-                value={customAmount || ''}
-                onChange={(e) => setCustomAmount(Number(e.target.value))}
-                placeholder="Ej. 50000"
-                className="w-full text-xs p-2.5 rounded-2xl border border-zinc-200 bg-zinc-50 text-zinc-800"
-              />
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] font-extrabold text-zinc-500 uppercase block mb-1">
+                  Nombre Aportante:
+                </label>
+                <input
+                  type="text"
+                  value={payerName}
+                  onChange={(e) => setPayerName(e.target.value)}
+                  placeholder="Ej. Mateo, Camila"
+                  className="w-full text-xs p-2.5 rounded-2xl border border-zinc-200 bg-white text-zinc-800 focus:outline-none focus:ring-2 focus:ring-zoop-500"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-extrabold text-zinc-500 uppercase block mb-1">
+                  Aporte COP (Máx: ${pendingAmount.toLocaleString('es-CO')}):
+                </label>
+                <input
+                  type="number"
+                  min="1000"
+                  max={pendingAmount}
+                  step="10000"
+                  value={customAmount || ''}
+                  onChange={(e) => {
+                    const val = Number(e.target.value);
+                    if (val > pendingAmount && pendingAmount > 0) {
+                      setCustomAmount(pendingAmount);
+                      setPaymentMessage(`⚠️ El aporte se ajustó al saldo restante ($${pendingAmount.toLocaleString('es-CO')} COP).`);
+                    } else {
+                      setCustomAmount(val);
+                    }
+                  }}
+                  placeholder={`Ej. ${Math.min(50000, pendingAmount || 50000)}`}
+                  className={`w-full text-xs p-2.5 rounded-2xl border bg-white text-zinc-800 focus:outline-none focus:ring-2 ${
+                    customAmount > pendingAmount && pendingAmount > 0
+                      ? 'border-rose-400 focus:ring-rose-400'
+                      : 'border-zinc-200 focus:ring-zoop-500'
+                  }`}
+                />
+              </div>
             </div>
+
+            {/* Chips Rápidos de Sugerencia de Aporte */}
+            {pendingAmount > 0 ? (
+              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                <span className="text-[9px] font-bold text-amber-800 uppercase">Sugerencias:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomAmount(pendingAmount);
+                    setPaymentMessage(null);
+                  }}
+                  className="text-[10px] font-extrabold bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-lg shadow-2xs transition-colors"
+                >
+                  Cubrir 100% (${pendingAmount.toLocaleString('es-CO')})
+                </button>
+                {pendingAmount > 20000 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCustomAmount(Math.round(pendingAmount / 2));
+                      setPaymentMessage(null);
+                    }}
+                    className="text-[10px] font-extrabold bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-lg shadow-2xs transition-colors"
+                  >
+                    Mitad (${Math.round(pendingAmount / 2).toLocaleString('es-CO')})
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="p-2 rounded-xl bg-emerald-100/70 border border-emerald-300 text-emerald-800 text-[10px] font-extrabold text-center">
+                🎉 ¡La vaca está 100% completada! El regalo está listo para Unboxing.
+              </div>
+            )}
+
+            {customAmount > pendingAmount && pendingAmount > 0 && (
+              <p className="text-[10px] font-bold text-rose-600 bg-rose-50 p-1.5 rounded-lg border border-rose-200">
+                ⚠️ El aporte no puede ser superior al saldo pendiente ($${pendingAmount.toLocaleString('es-CO')} COP).
+              </p>
+            )}
           </div>
         )}
 

@@ -35,6 +35,24 @@ export class PaymentsService {
       throw new BadRequestException('El regalo ya fue reclamado y completado previamente');
     }
 
+    if (dto.amountCop <= 0) {
+      throw new BadRequestException('El monto a pagar debe ser mayor a 0');
+    }
+
+    const currentNormalizedPaid = Math.min(gift.totalAmountCop, Math.max(0, gift.paidAmountCop));
+    const pendingAmountCop = Math.max(0, gift.totalAmountCop - currentNormalizedPaid);
+
+    if (dto.simulationOutcome === 'APPROVED') {
+      if (pendingAmountCop === 0) {
+        throw new BadRequestException('El valor total del regalo ya ha sido cubierto al 100%. No requiere más aportes.');
+      }
+      if (dto.amountCop > pendingAmountCop) {
+        throw new BadRequestException(
+          `El aporte ($${dto.amountCop.toLocaleString('es-CO')} COP) no puede ser superior al valor pendiente por cubrir ($${pendingAmountCop.toLocaleString('es-CO')} COP).`,
+        );
+      }
+    }
+
     // 2. Registrar la transacción inmutable de pago
     const transaction = await this.prisma.paymentTransaction.create({
       data: {
@@ -77,7 +95,7 @@ export class PaymentsService {
       });
       this.logger.log(`⏳ Pago pendiente en validación bancaria para orden ${dto.giftOrderId}`);
     } else if (dto.simulationOutcome === 'APPROVED') {
-      newPaidAmountCop = gift.paidAmountCop + dto.amountCop;
+      newPaidAmountCop = Math.min(gift.totalAmountCop, currentNormalizedPaid + dto.amountCop);
 
       if (newPaidAmountCop >= gift.totalAmountCop) {
         newStatus = 'READY_TO_UNBOX';

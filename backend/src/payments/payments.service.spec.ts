@@ -166,7 +166,10 @@ describe('PaymentsService - Pruebas Unitarias de Lógica de Pagos y Vaca', () =>
       expect(result.success).toBe(true);
       expect(prismaMock.giftOrder.update).toHaveBeenCalledWith({
         where: { id: 'gift-test-123' },
-        data: { status: 'PAYMENT_PENDING' },
+        data: {
+          status: 'PAYMENT_PENDING',
+          paidAmountCop: 0,
+        },
       });
       expect(realtimeGatewayMock.emitPaymentUpdated).toHaveBeenCalledWith(
         'gift-test-123',
@@ -214,7 +217,10 @@ describe('PaymentsService - Pruebas Unitarias de Lógica de Pagos y Vaca', () =>
       expect(result.success).toBe(true);
       expect(prismaMock.giftOrder.update).toHaveBeenCalledWith({
         where: { id: 'gift-test-123' },
-        data: { status: 'PAYMENT_REJECTED' },
+        data: {
+          status: 'PAYMENT_REJECTED',
+          paidAmountCop: 0,
+        },
       });
       expect(realtimeGatewayMock.emitPaymentUpdated).toHaveBeenCalledWith(
         'gift-test-123',
@@ -224,6 +230,23 @@ describe('PaymentsService - Pruebas Unitarias de Lógica de Pagos y Vaca', () =>
           paidAmountCop: 0,
         }),
       );
+    });
+
+    it('debe lanzar BadRequestException si el aporte supera el saldo restante del regalo', async () => {
+      prismaMock.giftOrder.findUnique.mockResolvedValue({
+        ...sampleGift,
+        totalAmountCop: 89000,
+        paidAmountCop: 0,
+      });
+
+      await expect(
+        service.processCheckout({
+          giftOrderId: 'gift-test-123',
+          payerName: 'Mateo Gómez',
+          amountCop: 500000,
+          simulationOutcome: 'APPROVED',
+        }),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('debe lanzar NotFoundException si el regalo no existe', async () => {
